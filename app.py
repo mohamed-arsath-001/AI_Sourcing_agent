@@ -8,9 +8,6 @@ import requests
 from datetime import datetime
 
 # ── Constants ──────────────────────────────────────────────────────────────────
-SHEET_ID    = "1Nc37l2Zz4J5vW4OO0koOENMibQuUb9ST9XOttRQtkhs"
-N8N_WEBHOOK = "https://aswathd.app.n8n.cloud/webhook/vc-agent"
-
 RSS_SOURCES = {
     "TechCrunch Startups": "https://techcrunch.com/tag/startups/feed/",
     "Product Hunt":        "https://www.producthunt.com/feed",
@@ -142,60 +139,6 @@ Rules:
         return None
 
 # ══════════════════════════════════════════════════════════════════════════════
-# N8N WEBHOOK 
-# ══════════════════════════════════════════════════════════════════════════════
-def trigger_n8n(event: str, payload: dict) -> tuple[bool, str]:
-    try:
-        body = {
-            "event":    event,
-            "data":     payload,
-            "sent_at":  datetime.utcnow().isoformat(),
-        }
-        resp = requests.post(N8N_WEBHOOK, json=body, timeout=15)
-        resp.raise_for_status()
-        return True, f"n8n triggered (HTTP {resp.status_code})."
-    except Exception as e:
-        return False, f"Webhook error: {e}"
-
-def fire_new_startups(records: list[dict]) -> tuple[bool, str]:
-    if not records:
-        return True, "No new startups — webhook skipped."
-    investigate = [r for r in records if r.get("decision") == "Investigate"]
-    avg_score   = round(sum(r["confidence_score"] for r in records) / len(records))
-    payload = {
-        "summary": {
-            "total_new":      len(records),
-            "to_investigate": len(investigate),
-            "avg_score":      avg_score,
-            "sheet_url":      f"https://docs.google.com/spreadsheets/d/{SHEET_ID}",
-        },
-        "startups": [
-            {
-                "title":       r["startup_title"],
-                "score":       r["confidence_score"],
-                "decision":    r["decision"],
-                "rationale":   r["rationale"],
-                "description": r.get("description", "")[:400],
-                "link":        r.get("link", ""),
-                "source":      r.get("source", ""),
-                "sourced_at":  r.get("sourced_at", "")[:10],
-                "vc_feedback": "Pending",
-            }
-            for r in records
-        ],
-    }
-    return trigger_n8n("new_startups", payload)
-
-def fire_feedback_update(title: str, feedback: str) -> tuple[bool, str]:
-    payload = {
-        "startup_title": title,
-        "vc_feedback":   feedback,
-        "updated_at":    datetime.utcnow().isoformat(),
-        "sheet_url":     f"https://docs.google.com/spreadsheets/d/{SHEET_ID}",
-    }
-    return trigger_n8n("feedback_update", payload)
-
-# ══════════════════════════════════════════════════════════════════════════════
 # STREAMLIT UI
 # ══════════════════════════════════════════════════════════════════════════════
 st.set_page_config(page_title="VC Sourcing Agent", page_icon="🔭", layout="wide")
@@ -213,8 +156,6 @@ st.markdown("""
   .feedback-rejected    { color:#dc2626;font-weight:600; }
   .section-label { font-size:11px;font-weight:700;text-transform:uppercase;
                    letter-spacing:.08em;color:#6b7280;margin-bottom:4px; }
-  .n8n-status { background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;
-                padding:10px 14px;font-size:13px;color:#166534; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -236,18 +177,6 @@ with st.sidebar:
 
     st.divider()
 
-    st.markdown('<div class="section-label">⚡ Automation</div>', unsafe_allow_html=True)
-    st.markdown(
-        '<div class="n8n-status">'
-        '✅ <b>n8n connected</b><br>'
-        'Email digest + Google Sheets sync<br>'
-        'fire automatically on every run.'
-        '</div>',
-        unsafe_allow_html=True,
-    )
-
-    st.divider()
-
     db_now = load_db()
     c1, c2, c3 = st.columns(3)
     with c1: st.metric("In DB",    len(db_now["startups"]))
@@ -263,8 +192,7 @@ with st.sidebar:
 st.title("🔭 Zestflow VC Deal Sourcing Agent")
 st.markdown(
     "Surfaces **net-new** startups matching your thesis · "
-    "Evaluated by **Gemini 2.5 Flash** · "
-    "Auto-synced via **n8n** → Gmail + Google Sheets"
+    "Evaluated by **Gemini 2.5 Flash**"
 )
 st.divider()
 
@@ -311,12 +239,8 @@ if run_clicked:
             save_db(db)
             st.write(f"💾 **{len(new_records)}** startups saved to cloud database.")
 
-            st.write("⚡ Firing n8n webhook → Email + Sheets…")
-            ok, msg = fire_new_startups(new_records)
-            st.write(f"   {'✅' if ok else '⚠️'} {msg}")
-
             status.update(
-                label=f"✅ Done! {len(new_records)} startups found · Email sent · Sheet updated.",
+                label=f"✅ Done! {len(new_records)} startups found and evaluated.",
                 state="complete",
             )
     st.rerun()
@@ -419,7 +343,6 @@ for startup in filtered:
                         s["vc_feedback"] = None
                         s.pop("feedback_at", None)
                 save_db(db2)
-                fire_feedback_update(title, "Pending")
                 st.rerun()
         else:
             st.markdown("**Analyst Decision:**")
@@ -428,18 +351,16 @@ for startup in filtered:
                 if st.button("👍 Approve", key=f"approve_{title}", type="primary"):
                     db2 = load_db()
                     update_feedback(db2, title, "Approve")
-                    fire_feedback_update(title, "Approve")
                     st.rerun()
             with b2:
                 if st.button("👎 Reject", key=f"reject_{title}"):
                     db2 = load_db()
                     update_feedback(db2, title, "Reject")
-                    fire_feedback_update(title, "Reject")
                     st.rerun()
 
 st.divider()
 col_f1, col_f2 = st.columns([1, 1])
 with col_f1:
-    st.caption("VC Sourcing Agent · Gemini 2.5 Flash · n8n · Streamlit")
+    st.caption("VC Sourcing Agent · Gemini 2.5 Flash · Streamlit")
 with col_f2:
-    st.caption(f"[📊 Open Google Sheet ↗](https://docs.google.com/spreadsheets/d/{SHEET_ID})")
+    st.caption("All data stored securely in JSONBin.")
