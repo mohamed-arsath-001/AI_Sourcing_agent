@@ -226,7 +226,14 @@ if run_clicked:
         st.write(f"📡 Fetching data from **{feed_choice}** …")
         entries     = fetch_feed(RSS_SOURCES[feed_choice])
         new_entries = [e for e in entries if e["title"].lower().strip() not in seen]
-        st.write(f"   → {len(entries)} posts scanned · **{len(new_entries)} net-new companies found**")
+        
+        # --- THROTTLE IMPLEMENTED HERE ---
+        if len(new_entries) > 10:
+            st.write(f"   → {len(entries)} posts scanned. Found {len(new_entries)} net-new.")
+            st.write("   → 🛑 **Capping at 10 evaluations per run to protect API limits.**")
+            new_entries = new_entries[:10]
+        else:
+            st.write(f"   → {len(entries)} posts scanned · **{len(new_entries)} net-new companies found**")
 
         if not new_entries:
             status.update(label="✅ All caught up — no new startups found.", state="complete")
